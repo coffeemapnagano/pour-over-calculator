@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Trash2, Edit2, Play, Pause, RotateCcw, Coffee, Droplets, Clock, X, Save } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Plus, Trash2, Edit2, Play, Pause, RotateCcw, Coffee, Droplets, Clock, X, Save, Volume2, VolumeX } from 'lucide-react';
 
 // --- StepModal Component (Extracted outside of App) ---
 // モーダルをAppの外に出すことで、Appの再レンダリング時にモーダルが再生成されるのを防ぎます。
@@ -164,11 +164,54 @@ const App = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStep, setEditingStep] = useState(null); // nullなら新規追加
   const [mode, setMode] = useState('build'); // 'build' | 'timer'
+  const [isMuted, setIsMuted] = useState(false); // 音声ミュート
   
   // Timer State
   const [timerActive, setTimerActive] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+
+  // Audio Context Ref
+  const audioCtxRef = useRef(null);
+
+  // --- Audio Helper ---
+  const playTone = (freq, duration, type = 'sine') => {
+    if (isMuted) return;
+
+    // AudioContextの初期化（ユーザーアクションが必要なため、初回の発音時やボタンクリック時に呼ぶ）
+    if (!audioCtxRef.current) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) {
+        audioCtxRef.current = new AudioContext();
+      }
+    }
+
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+
+    // サスペンド状態なら再開
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(e => console.error("Audio resume failed", e));
+    }
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.frequency.value = freq;
+    osc.type = type;
+
+    // 音量のエンベロープ（クリックノイズ防止）
+    const now = ctx.currentTime;
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.1, now + 0.01); // アタック
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration); // ディケイ
+
+    osc.start(now);
+    osc.stop(now + duration + 0.1);
+  };
 
   // --- Calculations ---
   const targetWater = Math.round(coffeeGrams * ratio);
@@ -183,7 +226,6 @@ const App = () => {
 
   // --- Handlers ---
 
-  // モーダル操作
   const openAddModal = () => {
     setEditingStep({
       id: Date.now(),
@@ -208,19 +250,14 @@ const App = () => {
 
   const saveStep = () => {
     if (!editingStep) return;
-
-    // 数値型に確実に変換して保存（空文字の場合は0）
     const stepToSave = {
       ...editingStep,
       water: Number(editingStep.water),
       time: Number(editingStep.time)
     };
-
     if (steps.find(s => s.id === stepToSave.id)) {
-      // 編集
       setSteps(steps.map(s => s.id === stepToSave.id ? stepToSave : s));
     } else {
-      // 新規
       setSteps([...steps, stepToSave]);
     }
     closeModal();
@@ -231,10 +268,8 @@ const App = () => {
     closeModal();
   };
 
-  // プリセット追加ヘルパー
   const setPreset = (type) => {
     if (type === 'default') {
-      // Default (Initial State)
       setCoffeeGrams(15);
       setRatio(16);
       setSteps([
@@ -258,11 +293,12 @@ const App = () => {
     return () => clearInterval(interval);
   }, [timerActive, currentTime]);
 
-  // 現在のステップ判定
+  // 現在のステップ判定 & 音声トリガー
   useEffect(() => {
     let accumulatedTime = 0;
     let foundIndex = -1;
     
+    // ステップの計算
     for (let i = 0; i < steps.length; i++) {
       if (currentTime >= accumulatedTime && currentTime < accumulatedTime + steps[i].time) {
         foundIndex = i;
@@ -276,10 +312,40 @@ const App = () => {
     } else if (currentTime >= totalTimeScheduled) {
       setCurrentStepIndex(steps.length); // 終了
       setTimerActive(false);
+      playTone(1760, 0.4); // 終了音
     }
-  }, [currentTime, steps, totalTimeScheduled]);
 
-  const toggleTimer = () => setTimerActive(!timerActive);
+    // --- 音声再生ロジック (カウントダウン) ---
+    // 現在アクティブなステップを取得（終了している場合は最後のステップ情報などを使わない）
+    const currentIndexToCheck = foundIndex !== -1 ? foundIndex : steps.length;
+    
+    if (timerActive && currentIndexToCheck < steps.length) {
+      // 現在のステップの終了時刻を計算
+      const prevTime = steps.slice(0, currentIndexToCheck).reduce((acc, s) => acc + s.time, 0);
+      const stepEndTime = prevTime + steps[currentIndexToCheck].time;
+      const remaining = stepEndTime - currentTime;
+
+      // 10秒前からカウントダウン音 (以前は3秒前)
+      if (remaining <= 10 && remaining > 0) {
+        playTone(880, 0.1); // ピッ (予鈴)
+      }
+      // 0秒（切り替わり直前/直後）
+      // 注意: currentTimeが更新された瞬間に remaining が 0 になるタイミングで鳴らす
+      if (remaining === 0) {
+        playTone(1760, 0.3); // ピーン (完了/切り替わり)
+      }
+    }
+
+  }, [currentTime, steps, totalTimeScheduled, timerActive]); // isMutedはplayTone内で参照
+
+  const toggleTimer = () => {
+    // 初回再生時にAudioContextをResumeするために呼んでおく
+    if (!timerActive) {
+       playTone(0, 0); // 無音再生でコンテキスト起動ハック
+    }
+    setTimerActive(!timerActive);
+  };
+
   const resetTimer = () => {
     setTimerActive(false);
     setCurrentTime(0);
@@ -291,21 +357,34 @@ const App = () => {
     const activeStep = steps[currentStepIndex];
     const isFinished = currentStepIndex >= steps.length;
 
+    // --- 計算ロジック: 残り時間 ---
+    const previousStepsTime = steps.slice(0, currentStepIndex).reduce((acc, s) => acc + Number(s.time), 0);
+    const currentStepEndTime = previousStepsTime + (activeStep ? Number(activeStep.time) : 0);
+    const remainingTime = Math.max(0, currentStepEndTime - currentTime);
+    
     const previousWater = steps.slice(0, currentStepIndex).reduce((acc, s) => acc + Number(s.water), 0);
     const currentStepTargetWater = previousWater + (activeStep ? Number(activeStep.water) : 0);
 
     return (
-      <div className="min-h-screen bg-[#2a2420] text-[#f8f5f0] flex flex-col relative overflow-hidden">
+      <div className="fixed inset-0 z-50 bg-[#2a2420] text-[#f8f5f0] flex flex-col h-[100dvh] w-full overflow-hidden">
         {/* Timer Header */}
         <div className="flex justify-between items-center p-6 z-10">
-          <button onClick={() => setMode('build')} className="text-[#8c7b70] hover:text-[#f8f5f0] transition-colors">
-            <X size={24} /> 戻る
-          </button>
-          <div className="text-sm font-mono text-[#8c7b70]">Total: {totalWaterScheduled}ml</div>
+          <div className="flex gap-4">
+             <button onClick={() => setMode('build')} className="text-[#8c7b70] hover:text-[#f8f5f0] transition-colors flex items-center gap-1">
+              <X size={24} /> <span className="text-sm font-bold">戻る</span>
+            </button>
+            {/* Mute Button */}
+            <button 
+              onClick={() => setIsMuted(!isMuted)} 
+              className={`flex items-center gap-1 transition-colors ${isMuted ? 'text-red-400' : 'text-[#5c8a8a]'}`}
+            >
+              {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+            </button>
+          </div>
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col items-center justify-center z-10 p-6 text-center space-y-8">
+        <div className="flex-1 flex flex-col items-center justify-center z-10 p-6 text-center space-y-6">
           
           {isFinished ? (
             <div className="animate-in zoom-in duration-300">
@@ -320,25 +399,36 @@ const App = () => {
                 <span className="inline-block px-4 py-1.5 rounded-full bg-[#9c6644]/20 text-[#9c6644] text-sm font-bold tracking-wider uppercase mb-2 border border-[#9c6644]/30">
                   Step {currentStepIndex + 1} / {steps.length}
                 </span>
-                <h2 className="text-4xl font-bold text-[#f8f5f0]">{activeStep?.name}</h2>
+                <h2 className="text-3xl font-bold text-[#f8f5f0]">{activeStep?.name}</h2>
                 <p className="text-[#dcd6d0] max-w-xs mx-auto text-base min-h-[1.5rem]">
                   {activeStep?.description}
                 </p>
               </div>
 
-              {/* Big Timer */}
-              <div className="font-mono text-[7rem] font-bold tracking-tighter tabular-nums my-2 text-[#f8f5f0]">
-                {Math.floor(currentTime / 60)}:{(currentTime % 60).toString().padStart(2, '0')}
+              {/* Big Timer (Countdown) */}
+              <div className="relative py-4">
+                 <div className="text-center">
+                    <div className="text-xs text-[#8c7b70] uppercase tracking-widest font-bold mb-1">Next Step In</div>
+                    {/* 10秒前で色を変えるか？ => 従来通り5秒以下で赤くするが、音は10秒前から鳴る */}
+                    <div className={`text-8xl font-bold tracking-tighter tabular-nums leading-none ${remainingTime <= 5 && remainingTime > 0 ? 'text-red-400' : 'text-[#f8f5f0]'}`}>
+                      {remainingTime}<span className="text-3xl ml-2 font-normal text-[#8c7b70]">s</span>
+                    </div>
+                 </div>
+                 
+                 <div className="mt-4 flex items-center justify-center gap-2 text-[#8c7b70] font-mono bg-[#3a322e]/50 px-4 py-1.5 rounded-full inline-flex mx-auto">
+                   <Clock size={14} />
+                   <span className="text-sm">Total: {Math.floor(currentTime / 60)}:{(currentTime % 60).toString().padStart(2, '0')}</span>
+                 </div>
               </div>
 
               {/* Water Target for this step */}
-              <div className="flex flex-col items-center gap-2 p-4 rounded-2xl bg-[#3a322e] border border-[#4a403a]">
-                <div className="text-[#8c7b70] text-sm uppercase tracking-widest">Target Pour</div>
-                <div className="text-5xl font-bold text-[#5c8a8a] flex items-center gap-2">
-                  <Droplets size={32} className="fill-[#5c8a8a]/20" />
-                  {currentStepTargetWater}<span className="text-2xl">ml</span>
+              <div className="flex flex-col items-center gap-2 px-8 py-4 rounded-2xl bg-[#3a322e] border border-[#4a403a] w-full max-w-xs">
+                <div className="text-[#8c7b70] text-xs uppercase tracking-widest font-bold">Target Pour</div>
+                <div className="text-4xl font-bold text-[#5c8a8a] flex items-center gap-2">
+                  <Droplets size={24} className="fill-[#5c8a8a]/20" />
+                  {currentStepTargetWater}<span className="text-xl">ml</span>
                 </div>
-                <div className="text-[#8c7b70] text-sm">
+                <div className="text-[#8c7b70] text-xs">
                   (今回: {activeStep?.water}ml)
                 </div>
               </div>
