@@ -1,16 +1,28 @@
-# React + Vite
+# コーヒー抽出計算機 | Pour-over Calculator
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+豆の量と抽出比率（Ratio）から、最適な注湯量を一瞬で算出するハンドドリップ専用の計算ツールです。
 
-Currently, two official plugins are available:
+## 🚀 サイトURL
+[https://coffeemapnagano.github.io/pour-over-calculator/](https://coffeemapnagano.github.io/pour-over-calculator/)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## ✨ 主な機能
+- **自動注湯量計算**: 豆の量や比率を変更するだけで、各工程の必要湯量を即座に計算。
+- **マルチステップ管理**: 蒸らしから数回に分ける抽出まで、工程を自由にカスタマイズ・追加可能。
+- **抽出タイマー機能**: 設定した工程に合わせたカウントダウンタイマーを搭載。
+- **レスポンシブ対応**: スマートフォンでも操作しやすいインターフェース。
 
-## React Compiler
+## ☕ 使い方
+1. **豆の量**と**抽出比率**（1:15など）を設定します。
+2. 必要に応じて各ステップの湯量や時間を編集・追加します。
+3. 「抽出開始」ボタンを押して、タイマーに合わせてドリップを開始します。
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 🛠 使用技術
+- **React** (Vite)
+- **Tailwind CSS** (デザイン)
+- **Lucide React** (アイコン)
+- **GitHub Pages** (ホスティング)
 
-## Expanding the ESLint configuration
+## 開発の背景
+美味しいコーヒーを淹れるための計算をより簡単に、そしてスマートフォンのブラウザ上で完結させるために開発しました。
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+---
